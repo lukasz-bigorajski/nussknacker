@@ -42,9 +42,10 @@ class ScenarioAttachmentService(config: AttachmentsConfig, scenarioActivityRepos
   }
 
   def readAttachment(
-      attachmentId: Long
+      attachmentId: Long,
+      scenarioId: ProcessId
   )(implicit ec: ExecutionContext): Future[Option[AttachmentDataWithName]] = {
-    val attachmentFutureOpt = scenarioActivityRepository.findAttachment(attachmentId)
+    val attachmentFutureOpt = scenarioActivityRepository.findAttachment(attachmentId, scenarioId)
     CatsSyntax.futureOpt.map(attachmentFutureOpt) { attachment =>
       (attachment.fileName, attachment.data)
     }

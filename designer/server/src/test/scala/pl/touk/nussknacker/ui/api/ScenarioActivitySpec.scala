@@ -81,6 +81,20 @@ class ScenarioActivitySpec
           .statusCode(401)
           .equalsPlainBody("The resource requires authentication, which was not supplied with the request")
       }
+
+      "forbid access for insufficient privileges" in {
+        given()
+          .applicationState {
+            createSavedScenario(exampleScenario, category = Category1, Streaming)
+          }
+          .plainBody(commentContent)
+          .basicAuth("limitedReader", "limitedReader")
+          .when()
+          .get(s"$nuDesignerHttpAddress/api/processes/$exampleScenarioName/activity")
+          .Then()
+          .statusCode(403)
+          .equalsPlainBody("The supplied authentication is not authorized to access this resource")
+      }
     }
   }
 
@@ -335,6 +349,37 @@ class ScenarioActivitySpec
           .equalsPlainBody(fileContent)
       }
 
+      "not return existing attachment not connected to the scenario" in {
+        val attachmentIdFromOtherScenario = given()
+          .applicationState {
+            createSavedScenario(exampleScenario, category = Category1, Streaming)
+            createAttachment(scenarioName = exampleScenarioName, fileContent = fileContent)
+          }
+          .basicAuth("reader", "reader")
+          .when()
+          .get(s"$nuDesignerHttpAddress/api/processes/$exampleScenarioName/activity")
+          .Then()
+          .extractLong("attachments[0].id")
+        val newExampleScenario = ScenarioBuilder
+          .streaming(UUID.randomUUID().toString)
+          .source("sourceId", "barSource")
+          .emptySink("sinkId", "barSink")
+
+        given()
+          .basicAuth("reader", "reader")
+          .applicationState {
+            createSavedScenario(newExampleScenario, category = Category1, Streaming)
+          }
+          .when()
+          .get(
+            s"$nuDesignerHttpAddress/api/processes/${newExampleScenario.name}/activity/" +
+              s"attachments/$attachmentIdFromOtherScenario"
+          )
+          .Then()
+          .statusCode(200)
+          .equalsPlainBody("")
+      }
+
       "return empty body for no existing attachment" in {
         given()
           .applicationState {
@@ -368,6 +413,20 @@ class ScenarioActivitySpec
           .Then()
           .statusCode(401)
           .equalsPlainBody("The resource requires authentication, which was not supplied with the request")
+      }
+
+      "forbid access for insufficient privileges" in {
+        given()
+          .applicationState {
+            createSavedScenario(exampleScenario, category = Category1, Streaming)
+          }
+          .plainBody(commentContent)
+          .basicAuth("limitedReader", "limitedReader")
+          .when()
+          .get(s"$nuDesignerHttpAddress/api/processes/$exampleScenarioName/activity/attachments/1")
+          .Then()
+          .statusCode(403)
+          .equalsPlainBody("The supplied authentication is not authorized to access this resource")
       }
     }
   }

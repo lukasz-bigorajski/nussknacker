@@ -41,7 +41,10 @@ class AkkaToTapirStreamExtension(implicit val mat: Materializer) {
           DecodeResult.Value(result)
         }
 
-        override def encode(is: InputStream): Source[ByteString, Any] = StreamConverters.fromInputStream(() => is)
+        override def encode(is: InputStream): Source[ByteString, Any] = is.available() match {
+          case 0 => Source.empty
+          case _ => StreamConverters.fromInputStream(() => is)
+        }
 
         override def schema: Schema[InputStream] = Schema.schemaForInputStream
 

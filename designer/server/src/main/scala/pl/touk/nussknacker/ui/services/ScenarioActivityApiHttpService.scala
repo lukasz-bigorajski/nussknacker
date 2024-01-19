@@ -5,6 +5,7 @@ import com.typesafe.scalalogging.LazyLogging
 import pl.touk.nussknacker.engine.api.process.{ProcessId, ProcessName}
 import pl.touk.nussknacker.restmodel.SecurityError.AuthorizationError
 import pl.touk.nussknacker.security.Permission
+import pl.touk.nussknacker.security.Permission.Permission
 import pl.touk.nussknacker.ui.api.ScenarioActivityApiEndpoints.Dtos._
 import pl.touk.nussknacker.ui.api.{AuthorizeProcess, ScenarioActivityApiEndpoints, ScenarioAttachmentService}
 import pl.touk.nussknacker.ui.process.repository.{ProcessActivityRepository, UserComment}
@@ -36,11 +37,12 @@ class ScenarioActivityApiHttpService(
   expose {
     scenarioActivityApiEndpoints.scenarioActivityEndpoint
       .serverSecurityLogic(authorizeKnownUser[String])
-      .serverLogic { _: LoggedUser => scenarioName: ProcessName =>
-        for {
-          scenarioId       <- scenarioService.getProcessId(scenarioName)
-          scenarioActivity <- scenarioActivityRepository.findActivity(scenarioId)
-        } yield success(ScenarioActivity(scenarioActivity))
+      .serverLogic { implicit loggedUser => scenarioName: ProcessName =>
+        checkPermission(scenarioName, Permission.Read) { scenarioId =>
+          scenarioActivityRepository
+            .findActivity(scenarioId)
+            .map(scenarioActivity => success(ScenarioActivity(scenarioActivity)))
+        }
       }
   }
 
@@ -48,7 +50,7 @@ class ScenarioActivityApiHttpService(
     scenarioActivityApiEndpoints.addCommentEndpoint
       .serverSecurityLogic(authorizeKnownUser[String])
       .serverLogic { implicit loggedUser => request: AddCommentRequest =>
-        checkWrite(request.scenarioName) { scenarioId =>
+        checkPermission(request.scenarioName) { scenarioId =>
           scenarioActivityRepository
             .addComment(scenarioId, request.versionId, UserComment(request.commentContent))
             .map(success)
@@ -60,7 +62,7 @@ class ScenarioActivityApiHttpService(
     scenarioActivityApiEndpoints.deleteCommentEndpoint
       .serverSecurityLogic(authorizeKnownUser[String])
       .serverLogic { implicit loggedUser => request: DeleteCommentRequest =>
-        checkWrite(request.scenarioName) { _ =>
+        checkPermission(request.scenarioName) { _ =>
           scenarioActivityRepository
             .deleteComment(request.commentId)
             .map(success)
@@ -72,7 +74,7 @@ class ScenarioActivityApiHttpService(
     scenarioActivityApiEndpoints.addAttachmentEndpoint
       .serverSecurityLogic(authorizeKnownUser[String])
       .serverLogic { implicit loggedUser => request: AddAttachmentRequest =>
-        checkWrite(request.scenarioName) { scenarioId: ProcessId =>
+        checkPermission(request.scenarioName) { scenarioId =>
           attachmentService
             .saveAttachment(scenarioId, request.versionId, request.fileName.value, request.streamBody)
             .map(success)
@@ -83,34 +85,29 @@ class ScenarioActivityApiHttpService(
   expose {
     scenarioActivityApiEndpoints.downloadAttachmentEndpoint
       .serverSecurityLogic(authorizeKnownUser[String])
-      .serverLogic { _: LoggedUser => request: GetAttachmentRequest =>
-        (
-          for {
-            _               <- scenarioService.getProcessId(request.scenarioName)
-            maybeAttachment <- attachmentService.readAttachment(request.attachmentId)
-          } yield maybeAttachment
-        )
-          .map(maybeAttachment =>
-            maybeAttachment
-              .fold(GetAttachmentResponse.emptyResponse) { case (fileName, content) =>
-                GetAttachmentResponse(
-                  new ByteArrayInputStream(content),
-                  ContentDisposition.fromFileNameString(fileName).headerValue(),
-                  Option(URLConnection.guessContentTypeFromName(fileName))
-                    .getOrElse(MediaType.ApplicationOctetStream.toString())
-                )
-              }
-          )
-          .map(success)
+      .serverLogic { implicit loggedUser => request: GetAttachmentRequest =>
+        checkPermission(request.scenarioName, Permission.Read) { scenarioId =>
+          attachmentService
+            .readAttachment(request.attachmentId, scenarioId)
+            .map(_.fold(GetAttachmentResponse.emptyResponse) { case (fileName, content) =>
+              GetAttachmentResponse(
+                new ByteArrayInputStream(content),
+                ContentDisposition.fromFileNameString(fileName).headerValue(),
+                Option(URLConnection.guessContentTypeFromName(fileName))
+                  .getOrElse(MediaType.ApplicationOctetStream.toString())
+              )
+            })
+            .map(success)
+        }
       }
   }
 
-  private def checkWrite[E, R](scenarioName: ProcessName)(
+  private def checkPermission[E, R](scenarioName: ProcessName, permission: Permission = Permission.Write)(
       businessLogic: ProcessId => Future[LogicResult[E, R]]
   )(implicit loggedUser: LoggedUser): Future[LogicResult[E, R]] = {
     for {
       scenarioId <- scenarioService.getProcessId(scenarioName)
-      canWrite   <- scenarioAuthorizer.check(scenarioId, Permission.Write, loggedUser)
+      canWrite   <- scenarioAuthorizer.check(scenarioId, permission, loggedUser)
       result     <- if (canWrite) businessLogic(scenarioId) else Future.successful(securityError(AuthorizationError))
     } yield result
   }
