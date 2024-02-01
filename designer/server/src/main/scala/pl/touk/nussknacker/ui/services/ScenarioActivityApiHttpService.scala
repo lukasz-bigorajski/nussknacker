@@ -1,10 +1,12 @@
 package pl.touk.nussknacker.ui.services
 
+import cats.data.EitherT
 import com.typesafe.config.Config
 import com.typesafe.scalalogging.LazyLogging
 import pl.touk.nussknacker.engine.api.process.ProcessName
 import pl.touk.nussknacker.restmodel.BusinessError
 import pl.touk.nussknacker.security.Permission
+import pl.touk.nussknacker.ui.api.ScenarioActivityApiEndpoints.Dtos.ScenarioActivityErrors.ScenarioNotFoundError
 import pl.touk.nussknacker.ui.api.ScenarioActivityApiEndpoints.Dtos._
 import pl.touk.nussknacker.ui.api.{AkkaToTapirStreamExtension, AuthorizeProcess, ScenarioActivityApiEndpoints}
 import pl.touk.nussknacker.ui.process.ProcessService
@@ -36,56 +38,78 @@ class ScenarioActivityApiHttpService(
 
   expose {
     scenarioActivityApiEndpoints.scenarioActivityEndpoint
-      .serverSecurityLogic(authorizeKnownUser[BusinessError])
-      .serverLogicWithNuExceptionHandling { _: LoggedUser => scenarioName: ProcessName =>
+      .serverSecurityLogic(authorizeKnownUser[ScenarioActivityErrors])
+      .serverLogicEitherT { _: LoggedUser => scenarioName: ProcessName =>
         for {
-          scenarioId       <- scenarioService.getProcessId(scenarioName)
-          scenarioActivity <- scenarioActivityRepository.findActivity(scenarioId)
+          scenarioId <- EitherT.fromOptionF(
+            scenarioService.getProcessId(scenarioName),
+            BusinessError(ScenarioNotFoundError(scenarioName))
+          )
+          scenarioActivity <- EitherT.liftF(scenarioActivityRepository.findActivity(scenarioId))
         } yield ScenarioActivity(scenarioActivity)
       }
   }
 
   expose {
     scenarioActivityApiEndpoints.addCommentEndpoint
-      .serverSecurityLogic(authorizeKnownUser[BusinessError])
-      .serverLogicWithNuExceptionHandling { implicit loggedUser => request: AddCommentRequest =>
+      .serverSecurityLogic(authorizeKnownUser[ScenarioActivityErrors])
+      .serverLogicEitherT { implicit loggedUser => request: AddCommentRequest =>
         for {
-          scenarioId <- scenarioAuthorizer.check(request.scenarioName, Permission.Write)
-          _ <- scenarioActivityRepository.addComment(scenarioId, request.versionId, UserComment(request.commentContent))
+          scenarioId <- EitherT.fromOptionF(
+            scenarioService.getProcessId(request.scenarioName),
+            BusinessError(ScenarioNotFoundError(request.scenarioName))
+          )
+          _ <- EitherT.apply(scenarioAuthorizer.checkEither(scenarioId, Permission.Write))
+          _ <- EitherT.liftF(
+            scenarioActivityRepository.addComment(scenarioId, request.versionId, UserComment(request.commentContent))
+          )
         } yield ()
       }
   }
 
   expose {
     scenarioActivityApiEndpoints.deleteCommentEndpoint
-      .serverSecurityLogic(authorizeKnownUser[BusinessError])
-      .serverLogicWithNuExceptionHandling { implicit loggedUser => request: DeleteCommentRequest =>
+      .serverSecurityLogic(authorizeKnownUser[ScenarioActivityErrors])
+      .serverLogicEitherT { implicit loggedUser => request: DeleteCommentRequest =>
         for {
-          _ <- scenarioAuthorizer.check(request.scenarioName, Permission.Write)
-          - <- scenarioActivityRepository.deleteComment(request.commentId)
+          scenarioId <- EitherT.fromOptionF(
+            scenarioService.getProcessId(request.scenarioName),
+            BusinessError(ScenarioNotFoundError(request.scenarioName))
+          )
+          _ <- EitherT.apply(scenarioAuthorizer.checkEither(scenarioId, Permission.Write))
+          - <- EitherT.liftF(scenarioActivityRepository.deleteComment(request.commentId))
         } yield ()
       }
   }
 
   expose {
     scenarioActivityApiEndpoints.addAttachmentEndpoint
-      .serverSecurityLogic(authorizeKnownUser[BusinessError])
-      .serverLogicWithNuExceptionHandling { implicit loggedUser => request: AddAttachmentRequest =>
+      .serverSecurityLogic(authorizeKnownUser[ScenarioActivityErrors])
+      .serverLogicEitherT { implicit loggedUser => request: AddAttachmentRequest =>
         for {
-          scenarioId <- scenarioAuthorizer.check(request.scenarioName, Permission.Write)
-          _ <- attachmentService
-            .saveAttachment(scenarioId, request.versionId, request.fileName.value, request.streamBody)
+          scenarioId <- EitherT.fromOptionF(
+            scenarioService.getProcessId(request.scenarioName),
+            BusinessError(ScenarioNotFoundError(request.scenarioName))
+          )
+          _ <- EitherT.apply(scenarioAuthorizer.checkEither(scenarioId, Permission.Write))
+          _ <- EitherT.liftF(
+            attachmentService
+              .saveAttachment(scenarioId, request.versionId, request.fileName.value, request.streamBody)
+          )
         } yield ()
       }
   }
 
   expose {
     scenarioActivityApiEndpoints.downloadAttachmentEndpoint
-      .serverSecurityLogic(authorizeKnownUser[BusinessError])
-      .serverLogicWithNuExceptionHandling { _: LoggedUser => request: GetAttachmentRequest =>
+      .serverSecurityLogic(authorizeKnownUser[ScenarioActivityErrors])
+      .serverLogicEitherT { _: LoggedUser => request: GetAttachmentRequest =>
         for {
-          _               <- scenarioService.getProcessId(request.scenarioName)
-          maybeAttachment <- attachmentService.readAttachment(request.attachmentId)
+          _ <- EitherT.fromOptionF(
+            scenarioService.getProcessId(request.scenarioName),
+            BusinessError(ScenarioNotFoundError(request.scenarioName))
+          )
+          maybeAttachment <- EitherT.liftF(attachmentService.readAttachment(request.attachmentId))
           response = maybeAttachment match {
             case Some((fileName, content)) =>
               GetAttachmentResponse(

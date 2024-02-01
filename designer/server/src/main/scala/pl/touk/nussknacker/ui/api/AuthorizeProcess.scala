@@ -1,8 +1,7 @@
 package pl.touk.nussknacker.ui.api
 
-import pl.touk.nussknacker.engine.api.process.{ProcessId, ProcessName}
-import pl.touk.nussknacker.restmodel.BusinessError.ScenarioNotFoundError
-import pl.touk.nussknacker.restmodel.NuException
+import pl.touk.nussknacker.engine.api.process.ProcessId
+import pl.touk.nussknacker.restmodel.SecurityError
 import pl.touk.nussknacker.restmodel.SecurityError.AuthorizationError
 import pl.touk.nussknacker.security.Permission.Permission
 import pl.touk.nussknacker.ui.initialization.Initialization.nussknackerUser
@@ -25,17 +24,13 @@ class AuthorizeProcess(processRepository: FetchingProcessRepository[Future])(
       )
   }
 
-  def check(scenarioName: ProcessName, permission: Permission)(implicit user: LoggedUser): Future[ProcessId] =
-    for {
-      maybeScenarioId <- processRepository.fetchProcessId(scenarioName)
-      isAuthorized <- maybeScenarioId match {
-        case Some(scenarioId) =>
-          check(scenarioId, permission, user).flatMap {
-            case true  => Future.successful(scenarioId)
-            case false => Future.failed(NuException(AuthorizationError))
-          }
-        case None => Future.failed(NuException(ScenarioNotFoundError(scenarioName)))
+  def checkEither(scenarioId: ProcessId, permission: Permission)(
+      implicit loggedUser: LoggedUser
+  ): Future[Either[SecurityError, Unit]] =
+    check(scenarioId, permission, loggedUser)
+      .map {
+        case true  => Right(())
+        case false => Left(AuthorizationError)
       }
-    } yield isAuthorized
 
 }

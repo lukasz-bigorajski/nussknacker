@@ -88,7 +88,6 @@ object BaseEndpointDefinitions {
 }
 
 sealed trait NuError
-case class NuException(nuError: NuError) extends Exception
 
 sealed trait SecurityError extends NuError
 
@@ -97,14 +96,4 @@ object SecurityError {
   case object AuthorizationError  extends SecurityError
 }
 
-sealed trait BusinessError extends NuError {
-  def message: String
-}
-
-object BusinessError {
-
-  case class ScenarioNotFoundError(scenarioName: ProcessName) extends BusinessError {
-    override def message: String = s"No scenario ${scenarioName.value} found"
-  }
-
-}
+final case class BusinessError[BUSINESS_ERROR](businessError: BUSINESS_ERROR) extends NuError

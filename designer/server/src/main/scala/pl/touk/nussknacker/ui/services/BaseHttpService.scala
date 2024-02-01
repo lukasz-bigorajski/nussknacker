@@ -1,8 +1,9 @@
 package pl.touk.nussknacker.ui.services
 
+import cats.data.EitherT
 import com.typesafe.config.Config
 import pl.touk.nussknacker.restmodel.SecurityError.{AuthenticationError, AuthorizationError}
-import pl.touk.nussknacker.restmodel.{BusinessError, NuException, SecurityError}
+import pl.touk.nussknacker.restmodel.{BusinessError, NuError, SecurityError}
 import pl.touk.nussknacker.security.AuthCredentials
 import pl.touk.nussknacker.ui.security.api._
 import pl.touk.nussknacker.ui.services.BaseHttpService.NoRequirementServerEndpoint
@@ -10,6 +11,7 @@ import sttp.tapir.server.{PartialServerEndpoint, ServerEndpoint}
 
 import java.util.concurrent.atomic.AtomicReference
 import scala.concurrent.{ExecutionContext, Future}
+import scala.reflect.ClassTag
 
 abstract class BaseHttpService(
     config: Config,
@@ -72,23 +74,36 @@ abstract class BaseHttpService(
 
   protected def securityError[SE <: SecurityError](error: SE) = Left(Right(error))
 
-  private type PartialEndpoint[INPUT, OUTPUT, -R] =
-    PartialServerEndpoint[_, LoggedUser, INPUT, Either[BusinessError, SecurityError], OUTPUT, R, Future]
+  private type PartialEndpoint[INPUT, OUTPUT, BUSINESS_ERROR, -R] =
+    PartialServerEndpoint[_, LoggedUser, INPUT, Either[BUSINESS_ERROR, SecurityError], OUTPUT, R, Future]
 
-  implicit class ServerLogicExtension[INPUT, OUTPUT, -R](endpoint: PartialEndpoint[INPUT, OUTPUT, R]) {
+  implicit class ServerLogicExtension[INPUT, OUTPUT, BUSINESS_ERROR, -R](
+      endpoint: PartialEndpoint[INPUT, OUTPUT, BUSINESS_ERROR, R]
+  ) {
 
-    def serverLogicWithNuExceptionHandling(f: LoggedUser => INPUT => Future[OUTPUT]) =
+//    def serverLogicEither(f: LoggedUser => INPUT => Future[Either[NuError, OUTPUT]]) =
+//      endpoint.serverLogic { loggedUser: LoggedUser => input: INPUT =>
+//        toTapirResponse(f(loggedUser)(input))
+//      }
+
+    def serverLogicEitherT(
+        f: LoggedUser => INPUT => EitherT[Future, NuError, OUTPUT]
+    )(implicit tag: ClassTag[BUSINESS_ERROR]) =
       endpoint.serverLogic { loggedUser: LoggedUser => input: INPUT =>
-        toTapirResponse(f(loggedUser)(input))
+        toTapirResponse(f(loggedUser)(input).value)
       }
 
-    private def toTapirResponse(result: Future[OUTPUT]): Future[LogicResult[BusinessError, OUTPUT]] = result
-      .map(success)
-      .recover { case NuException(nuError) =>
-        nuError match {
-          case error: SecurityError => securityError(error)
-          case error: BusinessError => businessError(error)
-        }
+    private def toTapirResponse(
+        result: Future[Either[NuError, OUTPUT]]
+    )(implicit tag: ClassTag[BUSINESS_ERROR]): Future[LogicResult[BUSINESS_ERROR, OUTPUT]] =
+      result.map {
+        case Left(nuError) =>
+          nuError match {
+            case e: SecurityError  => securityError(e)
+            case e: BUSINESS_ERROR => businessError(e)
+            case _                 => throw new IllegalStateException("Should not happen")
+          }
+        case Right(value) => success(value)
       }
 
   }
