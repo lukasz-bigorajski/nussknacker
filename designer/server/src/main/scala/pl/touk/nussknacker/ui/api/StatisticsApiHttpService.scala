@@ -43,7 +43,6 @@ class StatisticsApiHttpService(
       .serverSecurityLogic(authorizeKnownUser[Unit])
       .serverLogicSuccess { _ => request =>
         saveStatistics(request)
-        Future.successful(())
       }
   }
 

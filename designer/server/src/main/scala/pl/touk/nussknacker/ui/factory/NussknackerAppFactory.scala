@@ -15,6 +15,8 @@ import pl.touk.nussknacker.ui.db.DbRef
 import pl.touk.nussknacker.ui.db.timeseries.QuestDbFEStatisticsRepository
 import pl.touk.nussknacker.ui.server.{AkkaHttpBasedRouteProvider, NussknackerHttpServer}
 
+import java.time.Clock
+
 class NussknackerAppFactory(processingTypeDataStateFactory: ProcessingTypeDataStateFactory) extends LazyLogging {
 
   def this() = {
@@ -24,7 +26,8 @@ class NussknackerAppFactory(processingTypeDataStateFactory: ProcessingTypeDataSt
   }
 
   def createApp(
-      baseUnresolvedConfig: Config = ConfigFactoryExt.parseUnresolved(classLoader = getClass.getClassLoader)
+      baseUnresolvedConfig: Config = ConfigFactoryExt.parseUnresolved(classLoader = getClass.getClassLoader),
+      clock: Clock = Clock.systemUTC()
   ): Resource[IO, Unit] = {
     for {
       config <- designerConfigFrom(baseUnresolvedConfig)
@@ -34,7 +37,7 @@ class NussknackerAppFactory(processingTypeDataStateFactory: ProcessingTypeDataSt
       _                      <- Resource.eval(IO(SLF4JBridgeHandlerRegistrar.register()))
       metricsRegistry        <- createGeneralPurposeMetricsRegistry()
       db                     <- DbRef.create(config.resolved)
-      feStatisticsRepository <- QuestDbFEStatisticsRepository.create()
+      feStatisticsRepository <- QuestDbFEStatisticsRepository.create(system, clock)
       server = new NussknackerHttpServer(
         new AkkaHttpBasedRouteProvider(db, metricsRegistry, processingTypeDataStateFactory, feStatisticsRepository)(
           system,
